@@ -3,8 +3,7 @@
 If R returns error when installing packages
 try
 
->
-fname <- tempfile()
+>fname <- tempfile()
 download.file("https://cran.uni-muenster.de/", destfile=fname)
 file.remove(fname)
 
