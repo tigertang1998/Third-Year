@@ -14,5 +14,6 @@ and
 
 ```
 options(download.file.method="libcurl")
-ref : https://stackoverflow.com/questions/33355444/r-when-trying-to-install-package-internetopenurl-failed/33372798
 ```
+
+ref : https://stackoverflow.com/questions/33355444/r-when-trying-to-install-package-internetopenurl-failed/33372798
