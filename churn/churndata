@@ -1,0 +1,251 @@
+require(dplyr)
+require(ggplot2)
+require(ggcorrplot)
+require(ROCR)
+require(caret)
+require(data.table)
+require(grid)
+require(gridExtra)
+require(gtable)
+require(class)
+require(randomForest)
+
+load("C:/Users/TIGER/Desktop/3rd Year/Data Science/druguse.RData")
+
+#1.1
+ggplot(druguse, aes(country)) + 
+  geom_bar(aes(fill = UseLevel)) + 
+  labs(x = "Country", y = "Number of individuals", title = "Number of individuals with their uselevel of drugs in each country")
+
+
+ggplot(druguse, aes(gender)) + 
+  geom_bar(aes(fill = UseLevel)) + 
+  labs(x = "Gender", y = "Number of individuals", title = "Number of individuals with their uselevel of drugs in each gender")
+
+#data cleaning
+newdruguse <- druguse
+newdruguse$gender <- as.numeric(factor(druguse$gender))
+newdruguse$agegroup <- as.numeric(factor(druguse$agegroup))
+newdruguse$country <- as.numeric(factor(druguse$country))
+newdruguse$ethnicity <- as.numeric(factor(druguse$ethnicity))
+newdruguse$any <- as.numeric(factor(druguse$any))
+newdruguse$UseLevel <- as.numeric(factor(druguse$UseLevel))
+
+
+
+
+#1.2
+#1 Heatmap
+corr <- cor(newdruguse)
+ggcorrplot(corr[32:33,1:31]) +
+  labs(x = "outcome", y = "predictor", title = "Heatmap of severity and uselevel with other predictor variables")
+
+#2
+ggplot(druguse, aes(x = conscientiousness, y = opentoexperience)) +
+  geom_point(aes(color = UseLevel), size = 1.5) +
+  theme_bw() +
+  labs(title = "Scatter plot of conscientiousness and opentoexperience of individuals")
+#3
+ggplot(druguse, aes(x = UseLevel, y = opentoexperience, fill = UseLevel)) +
+  geom_boxplot() +
+  geom_jitter(shape=1, position=position_jitter(0.1)) +
+  labs(title = "Opentoexperience of individuals, sorted by Uselevel")
+#4
+ggplot(druguse, aes(x = agegroup, fill = UseLevel)) +
+  facet_wrap(~gender) +
+  geom_bar(alpha = 0.5) +
+  labs(y = "Number of individuals in each agegroup", title = "Number of individuals in each Uselevel, sorted by agegroup and gender")
+#5
+ggplot(druguse, aes(x =  severity, fill = gender)) + 
+  facet_wrap(~ country) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Density plot of severity, sorted by country and gender")
+
+#6
+ggplot(druguse, aes(x =  agegroup, y = severity)) + 
+  geom_violin(fill = "skyblue", scale = "width", aes(group = agegroup)) +
+  labs(title = "Violin plot of severity, sorted by agegroup")
+
+
+
+#2
+#2.1
+new2druguse <- druguse[,c(1:16,33)]
+train <- new2druguse[1:1400,]
+validation <- new2druguse[1401:1885,]
+model <- glm(UseLevel ~., family = binomial(link = 'logit'), data = train)
+summary(model)
+levels(train$UseLevel)
+# Note that the estimate coefficient of nicotine is 0.49 which is positive, hence we conclude that given other predictors, smokers are more likely to have a high use level.
+# given other predictors, chocolate eaters are less likely to have a high use level.
+
+
+#2.2
+predictdata <- predict(model, newdata = validation[,1:16], type = "response")
+mypreds <- ifelse(predictdata > 0.5, 1, 0)
+validation$UseLevel <- ifelse(validation$UseLevel == "high", 1, 0)
+#create table
+TP <- sum(mypreds==1 & validation$UseLevel =="1") 
+FP <- sum(mypreds==1 & validation$UseLevel =="0") 
+TN <- sum(mypreds==0 & validation$UseLevel =="0") 
+FN <- sum(mypreds==0 & validation$UseLevel =="1") 
+tablematrix <- matrix(data = c(TP,FN,FP,TN), nrow = 2, ncol = 2, 
+                      dimnames = list(c("positive","negative"),c("positive","negative")))
+names(dimnames(tablematrix)) <- c("predicted","observed")
+tablematrix
+
+#2.3
+accuracy <- (TP+TN)/(TP+TN+FN+FP)
+accuracy
+#Create ROC curve
+pr <- prediction(predictdata, validation$UseLevel)
+
+roc <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(roc)
+par(new=TRUE)
+lines(0:1, 0:1, type="l",lty =2)
+title("ROC curve", xlab = "False positive rate", ylab = "True positive rate")
+par(new=FALSE)
+
+
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+
+
+#2.4
+#Randomly shuffle the data
+new2druguse<- new2druguse[sample(nrow(new2druguse)),]
+new2druguse$UseLevel <- ifelse(new2druguse$UseLevel == "high", 1, 0)
+
+#Create 10 equally size folds
+folds <- cut(seq(1,nrow(new2druguse)),breaks=10,labels=FALSE)
+
+#Perform 10 fold cross validation
+accuracy_list <- c()
+
+for(i in 1:10){
+  #Segement data by fold
+  testIndexes <- which(folds==i,arr.ind=TRUE)
+  testData <- new2druguse[testIndexes, ]
+  trainData <- new2druguse[-testIndexes, ]
+  model <- glm(UseLevel ~., family = binomial(link = 'logit'), data = trainData)
+  predictdata <- predict(model, newdata = testData[,1:16], type = "response")
+  mypreds <- ifelse(predictdata > 0.5, 1, 0)
+  #Create list of accuracy of each fold
+  TP <- sum(mypreds==1 & testData$UseLevel =="1") 
+  TN <- sum(mypreds==0 & testData$UseLevel =="0") 
+  accuracy <- (TP+TN)/nrow(testData)
+  accuracy_list <- c(accuracy_list, accuracy)
+  avg_accuracy <- sum(accuracy_list)/10
+}
+
+avg_accuracy
+
+#Create table
+accuracy_dt <- data.table(Time = c(1:10, "Average"),
+                          Accuracy = c(accuracy_list, avg_accuracy))
+
+table <- tableGrob(accuracy_dt)
+
+title <- textGrob(" Accuracy of each time",gp=gpar(fontsize=14))
+footnote <- textGrob("", x=0, hjust=0,
+                     gp=gpar( fontface="italic"))
+
+padding <- unit(0.5,"line")
+table <- gtable_add_rows(table, 
+                         heights = grobHeight(title) + padding,
+                         pos = 0)
+table <- gtable_add_rows(table, 
+                         heights = grobHeight(footnote)+ padding)
+table <- gtable_add_grob(table, list(title, footnote),
+                         t=c(1, nrow(table)), l=c(1,2), 
+                         r=ncol(table))
+grid.newpage()
+grid.draw(table)
+
+
+
+
+#3
+#3.1
+
+# train-cvdata 80%
+# test 20%
+
+new3druguse <- newdruguse[sample(nrow(newdruguse)), c(1:16,33)]
+train <- new3druguse[1:round(0.8*nrow(new3druguse)),]
+test <- new3druguse[round(0.8*nrow(new3druguse)+1):nrow(new3druguse),]
+
+# KNN
+folds <- cut(seq(1,nrow(train)),breaks=10,labels=FALSE)
+mse_for_k_list <- c() #list of average MSE of different k in knn
+for(k in 1:50){
+  cv_mse_list <- c() #list of MSEs of cross validation when one block is left out
+  for(i in 1:10){
+    #Segement data by fold and train, predict
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    cv_test <- train[testIndexes, -17]
+    cv_test_observe <- train[testIndexes, 17]
+    cv_train <- train[-testIndexes, -17]
+    cv_train_observe <- train[-testIndexes, 17]
+    cv_predict <- knn(cv_train, cv_test, cv_train_observe, k = k)
+    cv_mse <- sum(cv_predict != cv_test_observe)/length(cv_predict)
+    cv_mse_list <- c(cv_mse_list, cv_mse)
+  }
+  mse_for_k <- sum(cv_mse_list)/10
+  mse_for_k_list <- c(mse_for_k_list, mse_for_k)
+}
+plot(1:50, mse_for_k_list, 
+     type = "o",
+     main = "MSE of different k in knn", 
+     xlab = "k", ylab = "MSE")
+
+my_k <- which(mse_for_k_list == min(mse_for_k_list)) # we choose the k that minimises the MSE
+my_k
+knn_predict <- knn(train[,-17], test[,-17], train[,17], k = my_k)
+
+knn_accuracy <- sum(c(knn_predict) == test[17])/nrow(test)
+
+# RandomForest
+train$UseLevel <- as.character(train$UseLevel)
+train$UseLevel <- as.factor(train$UseLevel)
+
+mse_for_n_list <- c() #list of average MSE of different n(number of trees) in random forest
+for(n in seq(40,500,by=20)){
+  cv_mse_list <- c() #list of MSEs of cross validation when one block is left out
+  for(i in 1:5){   #perfom 5-fold CV
+    #Segement data by fold and train, predict
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    cv_test <- train[testIndexes, ]
+    cv_train <- train[-testIndexes, ]
+    rf <- randomForest(UseLevel ~ ., data = cv_train, ntree = n, mtry = sqrt(16))
+    cv_rf_predict <- predict(rf, cv_test, type="response")
+    cv_mse <- sum(cv_rf_predict != cv_test[,17])/length(cv_rf_predict)
+    cv_mse_list <- c(cv_mse_list, cv_mse)
+  }
+  mse_for_n <- sum(cv_mse_list)/5
+  mse_for_n_list <- c(mse_for_n_list, mse_for_n)
+}
+# plot MSE of different n in Random Forest
+plot(seq(40,500,by=20), mse_for_n_list, 
+     type = "o",
+     main = "MSE of different n in Random Forest", 
+     xlab = "n", ylab = "MSE")
+
+my_n <- which(mse_for_n_list == min(mse_for_n_list))
+my_n
+rf <- randomForest(UseLevel ~ ., data = train, ntree = my_n, mtry = sqrt(16))
+rf_predict <- predict(rf, test, type="response")
+
+rf_accuracy <- sum(c(rf_predict) == test[17])/nrow(test)
+
+
+# SVM
+
+
+
+
+
+
+
