@@ -1,7 +1,7 @@
-#Question asked
+# Question asked
 C1 - MachineLearning.pdf
 
-#Output
+# Output
 - MAIN rmd file
 - html
 - poster
