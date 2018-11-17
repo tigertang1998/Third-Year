@@ -1,0 +1,834 @@
+---
+title: "A50 Coursework"
+author: "Hu Tang"
+date: "November 12, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**The contents of this work and the associated code are my own unless otherwise stated**
+
+# Load libraries and import data:
+
+```{r}
+require(dplyr)
+require(ggplot2)
+require(ggcorrplot)
+require(ROCR)
+require(caret)
+require(data.table)
+require(grid)
+require(gridExtra)
+require(gtable)
+require(class)
+require(randomForest)
+require(e1071)
+require(caret)
+require(leaps)
+
+load("C:/Users/TIGER/Desktop/3rd Year/Data Science/druguse.RData")
+
+set.seed(123)
+```
+
+#Question 1
+##1.1(a)
+
+```{r}
+ggplot(druguse, aes(country)) + 
+  geom_bar(aes(fill = UseLevel)) + 
+  labs(x = "Country", y = "Number of individuals", title = "Number of individuals with their uselevel of drugs in each country")
+```
+
+The plot shows that apart from UK, which has higher proportion of individuals that have low use level, the other countries have higher proportion of individuals that have high use level.
+
+##1.1(b)
+```{r}
+ggplot(druguse, aes(gender)) + 
+  geom_bar(aes(fill = UseLevel)) + 
+  labs(x = "Gender", y = "Number of individuals", title = "Number of individuals with their uselevel of drugs in each gender")
+```
+
+The plot illustrates that male are more likely to have higher use level of drugs than female.
+
+##data cleaning
+We change some feature of druguse to numerical variables for future EDA and modeling purposes.
+```{r}
+newdruguse <- druguse
+newdruguse$gender <- as.numeric(factor(druguse$gender))
+newdruguse$agegroup <- as.numeric(factor(druguse$agegroup))
+newdruguse$country <- as.numeric(factor(druguse$country))
+newdruguse$ethnicity <- as.numeric(factor(druguse$ethnicity))
+newdruguse$any <- as.numeric(factor(druguse$any))
+newdruguse$UseLevel <- as.numeric(factor(druguse$UseLevel))
+```
+
+##1.2
+###1.2.1 Pearson Correlation Heatmap
+```{r,fig.width=8,fig.height=8}
+corr <- cor(newdruguse)
+ggcorrplot(corr) +
+  labs(x = "outcome", 
+       y = "predictor") +
+  ggtitle("Pearson Correlation Heatmap") +
+  theme(plot.title = element_text(hjust=0.5,size=22))
+```
+
+The plot shows that severity and use level both have strong positive correlations with the illegal drugs(since both severity and uselevel are constructed from them) and nicotine, sensation, impulsiveness, opentoexperience and gender. Also, strong negative correlations with conscientiousness, agreeableness, education and agegroup. Nearly no correlation with alcohol, extraversion and country.
+
+
+###1.2.2 Scatter plot of conscientiousness and opentoexperience of individuals
+```{r}
+ggplot(druguse, aes(x = conscientiousness, y = opentoexperience)) +
+  geom_point(aes(color = UseLevel), size = 1.5) +
+  theme_bw() +
+  labs(title = "Scatter plot of conscientiousness and opentoexperience of individuals")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+We can see that there is a boundary that seperate low and high use levels: opentoexperience and use level has a strong positive correlation, while conscientiousness and use level has a strong negative correlation.
+
+
+###1.2.3 Opentoexperience of individuals, sorted by Uselevel
+```{r}
+ggplot(druguse, aes(x = UseLevel, y = opentoexperience, fill = UseLevel)) +
+  geom_boxplot() +
+  geom_jitter(shape=1, position=position_jitter(0.1)) +
+  labs(title = "Opentoexperience of individuals, sorted by Uselevel") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("#47b8e0","#E53A40"))
+```
+
+The plot illustrates that use level and opentoexpeirence has a strong positive correlation.
+
+
+###1.2.4 Number of individuals in each Uselevel, sorted by agegroup and gender
+```{r,fig.width=8,fig.height=8}
+druguse_plus <- druguse
+druguse_plus$gender_age <- paste(druguse_plus$gender,"&",druguse_plus$agegroup)
+druguse_plus$gender_age <- factor(druguse_plus$gender_age, levels = c("female & 18-24", "female & 25-34", "female & 35-44", "female & 45-54", "female & 55-64", "female & 65+", "male & 65+", "male & 55-64", "male & 45-54", "male & 35-44", "male & 25-34", "male & 18-24"))
+ggplot(druguse_plus, aes(x = gender_age, fill = UseLevel)) +
+    geom_bar(alpha = 1) +
+    coord_polar(theta = "x", direction=1 )+
+    labs(x = "Gender and age group", y = "count", title = "Polar plot of number of individuals in each Uselevel, sorted by agegroup and gender")+
+    scale_fill_manual(values = c("#47b8e0","#E53A40"))+
+    theme(plot.title = element_text(hjust = 0.5))
+
+
+```
+
+The polar plot shows that younger individuals are more likely to have a high use level, and female tends to have a low use level comparing to male. 
+
+
+
+###1.2.5 Density plot of severity, sorted by country and gender
+```{r}
+ggplot(druguse_plus, aes(x = severity, fill = country)) +
+    geom_bar(alpha = 1) +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    labs(title = "Bar plot of severity, sorted by country")
+
+```
+
+
+From the plot, we can see that individuals in UK generally has lower severity than individuals in other countries. However individuals in USA has higher severity than individuals in other countries.
+
+
+###1.2.6 Violin plot of severity, sorted by agegroup
+```{r}
+ggplot(druguse, aes(x =  agegroup, y = severity)) + 
+    geom_violin(fill = "#4ea1d3", scale = "width", aes(group = agegroup)) +
+    labs(title = "Violin plot of severity, sorted by agegroup") + 
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+The plot tells us that younger people are more likely have higer severity. There is a strong negative correlation between severity and agegroup.
+
+#Question 2
+##2.1
+```{r}
+new2druguse <- druguse[,c(1:16,33)]
+train <- new2druguse[1:1400,]
+validation <- new2druguse[1401:1885,]
+model <- glm(UseLevel ~., family = binomial(link = 'logit'), data = train)
+levels(train$UseLevel)
+summary(model)
+```
+
+Note that higher value in nicotine and chocolate means higher frequency of consumpiton, also the levels of use level is low and high repectively.
+
+The estimate coefficient of nicotine is 0.49 which is positive, hence we conclude that given other predictors, smokers are more likely to have a high use level.
+
+Also, the estimate coefficient of chocolate is -0.09 which is negative. Hence, given other predictors, chocolate eaters are less likely to have a high use level.
+
+
+##2.2
+```{r}
+predictdata <- predict(model, newdata = validation[,1:16], type = "response")
+mypreds <- ifelse(predictdata > 0.5, 1, 0)
+validation$UseLevel <- ifelse(validation$UseLevel == "high", 1, 0)
+#create table
+TP <- sum(mypreds==1 & validation$UseLevel =="1") 
+FP <- sum(mypreds==1 & validation$UseLevel =="0") 
+TN <- sum(mypreds==0 & validation$UseLevel =="0") 
+FN <- sum(mypreds==0 & validation$UseLevel =="1") #Here 0 represents low, 1 represents high
+tablematrix <- matrix(data = c(TP,FN,FP,TN), nrow = 2, ncol = 2, 
+                      dimnames = list(c("high","low"),c("high","low")))
+names(dimnames(tablematrix)) <- c("predicted","observed")
+tablematrix
+```
+
+##2.3
+Accuracy
+```{r}
+accuracy <- (TP+TN)/(TP+TN+FN+FP) #implement the accuracy formula
+accuracy
+```
+
+ROC curve
+```{r}
+pr <- prediction(predictdata, validation$UseLevel)
+roc <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(roc)
+par(new=TRUE)
+lines(0:1, 0:1, type="l",lty =2)
+title("ROC curve", xlab = "False positive rate", ylab = "True positive rate")
+par(new=FALSE)
+
+```
+
+The ROC curve is high above $y=x$, which means it is a good classfier.
+
+Compute AUC
+```{r}
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+```
+
+The high AUC value also shows that it is a good classfier.
+
+#2.4
+```{r}
+#Randomly shuffle the data
+new2druguse<- new2druguse[sample(nrow(new2druguse)),]
+new2druguse$UseLevel <- ifelse(new2druguse$UseLevel == "high", 1, 0)
+
+folds <- cut(seq(1,nrow(new2druguse)),breaks=10,labels=FALSE) #Create 10 equally size folds
+
+
+accuracy_list <- c() #Create a list that save the accuracy of each time. 
+
+#Perform 10 fold cross validation
+
+for(i in 1:10){
+  #Segement data by fold
+  testIndexes <- which(folds==i,arr.ind=TRUE)
+  testData <- new2druguse[testIndexes, ] #assign testdata
+  trainData <- new2druguse[-testIndexes, ] #assign traindata
+  #implement model on traindata and predict on testdata
+  model <- glm(UseLevel ~., family = binomial(link = 'logit'), data = trainData)
+  predictdata <- predict(model, newdata = testData[,1:16], type = "response")
+  mypreds <- ifelse(predictdata > 0.5, 1, 0)
+  #Compute the accuracy of each time
+  TP <- sum(mypreds==1 & testData$UseLevel =="1") 
+  TN <- sum(mypreds==0 & testData$UseLevel =="0") 
+  accuracy <- (TP+TN)/nrow(testData)
+  accuracy_list <- c(accuracy_list, accuracy) #Append the new accuracy to the others.
+}
+avg_accuracy <- sum(accuracy_list)/10 #Average accuracy is calculated.
+avg_accuracy
+```
+
+Create table for the accuracy_list and average accuracy
+```{r}
+accuracy_dt <- data.table(Time = c(1:10, "Average"),
+                          Accuracy = c(accuracy_list, avg_accuracy))
+
+table <- tableGrob(accuracy_dt)
+
+tt <- textGrob(" Accuracy of each time",gp=gpar(fontsize=14))
+fn <- textGrob("", x=0, hjust=0,
+                     gp=gpar( fontface="italic"))
+
+padding <- unit(0.5,"line")
+table <- gtable_add_rows(table, 
+                         heights = grobHeight(tt) + padding,
+                         pos = 0)
+table <- gtable_add_rows(table, heights = grobHeight(fn)+ padding)
+table <- gtable_add_grob(table, list(tt, fn),t=c(1, nrow(table)), l=c(1,2), r=ncol(table))
+grid.newpage()
+grid.draw(table)
+
+```
+
+0.86 is the accuracy I would see if there is a new dataset.
+
+#Question 3
+##3.1
+For this task, I split the data to 80% train(cross-validation) data for hyperparameter tuning, and 20% testing data for computing the accuracy.
+
+I will use three models on train data: 
+
+1. KNN
+2. Random Forest
+3. SVM
+
+For each of these models, I tune the hyperparameter respectively：
+
+1. “K" in KNN
+2. ”Number of trees" in Random Forest
+3. “Kernel" in SVM
+
+I choose the hyperparameter value with highest accuracy based on cross-validation accuracy.
+
+Finally, I use these models to predict the test data, and ensemble the three predictions with majority vote.
+
+#### Data preparation
+```{r}
+# train-cvdata 80%
+# test 20%
+
+#Create train, test data and use them for all three training methods.
+new3druguse <- newdruguse[sample(nrow(newdruguse)), c(1:16,33)] #shuffle the data
+#Note that here newdruguse already has all the entries in numbers.
+tr <- new3druguse[1:round(0.8*nrow(new3druguse)),]
+te <- new3druguse[round(0.8*nrow(new3druguse)+1):nrow(new3druguse),]
+
+```
+
+
+#### Data scaling
+KNN and SVM uses distance in their algorithm and scaling the train and test data usually improves the accuracy. Also, scaling will not affect the random forest. 
+```{r}
+scaletrain <- scale(tr[, 1:16]); scaletest <- scale(te[, 1:16])
+train <- as.data.frame(scaletrain)
+train$UseLevel <- tr$UseLevel
+test <- as.data.frame(scaletest)
+test$UseLevel <- te$UseLevel
+
+```
+#### KNN
+```{r}
+folds <- cut(seq(1,nrow(train)),breaks=10,labels=FALSE)
+#We use cross-validation on train data and also tune the hyperparameter k based on averaged MSE.
+mse_for_k_list <- c() #list of average MSE of different k in knn
+for(k in 1:50){
+  cv_mse_list <- c() #list of MSEs of cross validation when one block is left out
+  for(i in 1:10){#10-fold CV
+    #Segement train data by fold
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    cv_test <- train[testIndexes, -17]
+    cv_test_observe <- train[testIndexes, 17]
+    cv_train <- train[-testIndexes, -17]
+    cv_train_observe <- train[-testIndexes, 17]
+    cv_predict <- knn(cv_train, cv_test, cv_train_observe, k = k)
+    cv_mse <- sum(cv_predict != cv_test_observe)/length(cv_predict)
+    cv_mse_list <- c(cv_mse_list, cv_mse)
+  }
+  mse_for_k <- sum(cv_mse_list)/10
+  mse_for_k_list <- c(mse_for_k_list, mse_for_k)
+}
+
+plot(1:50, mse_for_k_list, 
+     type = "o",
+     main = "MSE of different k in knn", 
+     xlab = "k", ylab = "MSE")
+
+my_k <- which(mse_for_k_list == min(mse_for_k_list)) # we choose the k that minimises the MSE
+my_k
+knn_predict <- knn(train[,-17], test[,-17], train[,17], k = my_k) # Use the model to predict testing data
+
+```
+
+#### RandomForest
+```{r}
+train$UseLevel <- as.character(train$UseLevel)#Convert the data to factor to tell the model use classification
+train$UseLevel <- as.factor(train$UseLevel)
+
+mse_for_n_list <- c() #list of average MSE of different n(number of trees) in random forest
+for(n in seq(50,500,by=50)){
+  cv_mse_list <- c() #list of MSEs of cross validation when one block is left out
+  for(i in 1:5){   #perfom 5-fold CV
+    #Segement data by fold and train, predict
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    cv_test <- train[testIndexes, ]
+    cv_train <- train[-testIndexes, ]
+    rf <- randomForest(UseLevel ~ ., data = cv_train, ntree = n, mtry = sqrt(16))
+    cv_rf_predict <- predict(rf, cv_test, type="response")
+    cv_mse <- sum(cv_rf_predict != cv_test[,17])/length(cv_rf_predict)
+    cv_mse_list <- c(cv_mse_list, cv_mse)
+  }
+  mse_for_n <- sum(cv_mse_list)/5
+  mse_for_n_list <- c(mse_for_n_list, mse_for_n)
+}
+# plot MSE of different n in Random Forest
+plot(seq(50,500,by=50), mse_for_n_list, 
+     type = "o",
+     main = "MSE of different n in Random Forest", 
+     xlab = "n", ylab = "MSE")
+
+nth_inlist <- which(mse_for_n_list == min(mse_for_n_list))
+my_n <- seq(50,500,by=50)[nth_inlist]# we choose the n that minimises the MSE
+
+rf <- randomForest(UseLevel ~ ., data = train, ntree = my_n, mtry = sqrt(16))
+rf_predict <- predict(rf, test, type="response") # Use the model to predict testing data
+
+```
+
+
+#### SVM
+```{r}
+mse_for_n_list <- c() #list of average MSE of different n(number of trees) in random forest
+kernels <- c("linear", "polynomial", "radial", "sigmoid")
+for(k in kernels){
+  cv_mse_list <- c() #list of MSEs of cross validation when one block is left out
+  for(i in 1:5){   #perfom 5-fold CV
+    #Segement data by fold and train, predict
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    cv_test <- train[testIndexes, ]
+    cv_train <- train[-testIndexes, ]
+    cv_svm <- svm(formula = UseLevel~., data = cv_train, kernel = k)
+    cv_svm_predict <- predict(cv_svm, cv_test, kernal = k)
+    cv_mse <- sum(cv_svm_predict != cv_test[,17])/length(cv_rf_predict)
+    cv_mse_list <- c(cv_mse_list, cv_mse)
+  }
+  mse_for_n <- sum(cv_mse_list)/5
+  mse_for_n_list <- c(mse_for_n_list, mse_for_n)
+}
+
+nth_inkernels <- which(mse_for_n_list == min(mse_for_n_list))
+my_kernel <- kernels[nth_inkernels]# we choose the kernel that minimises the MSE
+
+# create table
+mse_dt <- data.table(
+  Kernel = kernels,
+  MSE = mse_for_n_list
+)
+
+# Create table: MSE of each kernel
+table <- tableGrob(mse_dt)
+
+tt <- textGrob("MSE of each kernel",gp=gpar(fontsize=14))
+fn <- textGrob("", x=0, hjust=0,
+                     gp=gpar( fontface="italic"))
+
+padding <- unit(0.5,"line")
+table <- gtable_add_rows(table, 
+                         heights = grobHeight(tt) + padding,
+                         pos = 0)
+table <- gtable_add_rows(table, heights = grobHeight(fn)+ padding)
+table <- gtable_add_grob(table, list(tt, fn),t=c(1, nrow(table)), l=c(1,2), r=ncol(table))
+grid.newpage()
+grid.draw(table)
+grid.newpage()
+grid.draw(table)
+
+
+svm <- svm(formula = UseLevel~., data = train, kernal = my_kernel)
+svm_predict <- predict(svm, test, kernal = my_kernel)# Use the model to predict testing data
+
+```
+
+####Ensemble with majority vote
+
+```{r}
+final_predict <- c()#Create a list of predictions
+for (i in 1:length(svm_predict)){
+  predicts_i <- c(knn_predict[i], rf_predict[i], svm_predict[i])
+  mojority_i <- as.numeric(names(which.max(table(predicts_i))))#majority vote
+  final_predict <- c(final_predict, mojority_i)#append new prediction to list
+}
+
+
+```
+
+##3.2
+###Create table
+The levels of final_predict and uselevel in test are both 1 and 2, where 1 represents low and 2 represents high.
+```{r}
+TP <- sum(final_predict==2 & test[, 17] == 2) 
+FP <- sum(final_predict==2 & test[, 17] == 1) 
+TN <- sum(final_predict==1 & test[, 17] == 1) 
+FN <- sum(final_predict==1 & test[, 17] == 2) 
+tablematrix <- matrix(data = c(TP,FN,FP,TN), nrow = 2, ncol = 2, 
+                      dimnames = list(c("high","low"),c("high","low")))
+names(dimnames(tablematrix)) <- c("predicted","observed")
+tablematrix
+```
+###Accuracy
+```{r}
+accuracy <- sum(c(final_predict) == test[, 17])/nrow(test)
+accuracy
+```
+The accuracy is high, suggesting that this is a good classifier
+
+I split the data to 80% training (cross-validation) data for hyperparameter tuning, and 20% testing data for computing the accuracy.
+
+The testing data has never used in training or hyperparameter tuning with cross validation. 
+
+After traning the models using training set, models are then used to predict the testing data, and accuracy on obeservations that are not in the training set are estimated.
+
+
+#Question 4
+##4.1
+```{r}
+new4druguse <- druguse[, -c(31,32,33)]
+new4druguse$everuseH <- ifelse(new4druguse$heroin > 0, "yes", "no")
+
+new4druguse$everuseH <- as.character(new4druguse$everuseH) 
+new4druguse$everuseH <- as.factor(new4druguse$everuseH) #Convert the data to factor to tell the model use classification
+
+```
+**The question does not specifically say to exclude "heroin" for this model.**
+
+However, If we do not exclude heroin, then every tree that has "heroin" on its split will be a perfect classifier. Hence 0 MSE and 100% accuracy on the random forest model, and it is meaningless.
+
+This shows what will happen if we include heroin:
+```{r}
+rf_with_heroin <- randomForest(everuseH ~ ., data = new4druguse[1:1400,], ntree = 200, importance = TRUE, mtry = round(sqrt(30)))
+rf_with_heroin 
+varImpPlot(rf_with_heroin, main = "Variable importance in predicting ever use heroin")
+```
+
+From the summary, we could see there is an 100% accuracy.
+
+From the graph, we could see heroin is a dominant predictor, far more important than other predictors.
+
+**Hence, we exclude heroin to actually "predict" the everuseH**
+
+Again, I use the first 1400 rows to train the model, and choose the n(number of trees) that minimizes MSE:
+```{r}
+new4druguse <- new4druguse[, -24] #exclude the heroin feature
+
+train <- new4druguse[1:1400, ]
+test <- new4druguse[1401:nrow(new4druguse), ]
+
+
+mse_for_n_list <- c() #list of average MSE of different n(number of trees) in random forest
+for(n in seq(50,500,by=50)){
+  cv_mse_list <- c() #list of MSEs of cross validation when one block is left out
+  for(i in 1:5){   #perfom 5-fold CV
+    #Segement data by fold and train, predict
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    cv_test <- train[testIndexes, ]
+    cv_train <- train[-testIndexes, ]
+    rf <- randomForest(everuseH ~ ., data = cv_train, ntree = n, importance = TRUE, mtry = round(sqrt(29)))
+    cv_rf_predict <- predict(rf, cv_test, type="response")
+    cv_mse <- sum(cv_rf_predict != cv_test[,30])/length(cv_rf_predict)
+    cv_mse_list <- c(cv_mse_list, cv_mse)
+  }
+  mse_for_n <- sum(cv_mse_list)/5
+  mse_for_n_list <- c(mse_for_n_list, mse_for_n)
+}
+```
+####plot MSE of different n in Random Forest:
+```{r}
+plot(seq(50,500,by=50), mse_for_n_list, 
+     type = "o",
+     main = "MSE of different n in Random Forest", 
+     xlab = "n", ylab = "MSE")
+
+nth_inlist <- which(mse_for_n_list == min(mse_for_n_list))
+my_n <- seq(50,500,by=50)[nth_inlist]# we choose the n that minimises the MSE
+
+rf <- randomForest(everuseH ~ ., data = train, ntree = my_n, mtry = round(sqrt(29)))
+rf_predict <- predict(rf, test, type="response")
+
+```
+
+####Create table and compute accuracy:
+```{r}
+#Create table
+TP <- sum(rf_predict== "yes" & test[, 30] == "yes") 
+FP <- sum(rf_predict== "yes" & test[, 30] == "no") 
+TN <- sum(rf_predict== "no" & test[, 30] == "no") 
+FN <- sum(rf_predict== "no" & test[, 30] == "yes") 
+tablematrix <- matrix(data = c(TP,FN,FP,TN), nrow = 2, ncol = 2, 
+                      dimnames = list(c("Yes","No"),c("Yes","No")))
+names(dimnames(tablematrix)) <- c("predicted","observed")
+tablematrix
+
+#Accuracy and other metrics
+specificity <- TN/(TN+FP)
+print(paste("specificity: ", specificity))
+sensitivity <- TP/(TP+FN)
+print(paste("sensitivity: ", sensitivity))
+accuracy <- sum(rf_predict == test[, 30])/nrow(test)
+print(paste("accuracy ", accuracy))
+
+```
+This is a high accuracy, suggesting that this is a good classifier in general.
+However, sensitivity is only 0.5375, this classifier is weak on classifying the actrual true everuseH.
+
+##4.2
+From the heatmap in EDA, I saw a relatively strong correlation between nicotine and predictors like personality traits and background.
+
+I will predict whether the individual is a regular smoker(who used nicotine last day) given individual's background and personality traits.
+
+For this task, I will use the same method as the one in **3.1**:
+
+I split the data to 80% train(cross-validation) data for hyperparameter tuning, and 20% testing data for computing the accuracy.
+
+I will use three models on train data: 
+
+1. KNN
+2. Random Forest
+3. SVM
+
+For each of these models, I tune the hyperparameter respectively：
+
+1. "K" in KNN
+2. "Number of trees" in Random Forest
+3. "Kernel" in SVM
+
+I choose the hyperparameter value with highest accuracy based on cross-validation accuracy.
+
+Finally, I use these models to predict the test data, and ensemble the three predictions with majority vote.
+
+The reason that I choose these three models is because they are all good methods for classification, and when I ensemble them with majority voting, it could produce better predictions compared to a single model. If any one of the three models does not perform well or overfit the data, then it may be fixed by majority voting.
+
+
+#### Data preparing
+```{r}
+delete <- c(13,14,16:33)
+nicotineuse <- newdruguse[,-delete]
+nicotineuse$nlastday <- ifelse(nicotineuse$nicotine == 6, 1, 0)
+nicotineuse <- nicotineuse[,-13]
+
+# train-cvdata 80%
+# test 20%
+
+#Create train, test data and use them for all three training methods.
+nicotineuse <- nicotineuse[sample(nrow(nicotineuse)),] #shuffle the data
+tr <- nicotineuse[1:round(0.8*nrow(nicotineuse)),]
+te <- nicotineuse[round(0.8*nrow(nicotineuse)+1):nrow(nicotineuse),]
+
+```
+
+
+#### Data scaling
+KNN and SVM uses distance in their algorithm so we scale the train and test data, and scaling will not affect the random forest. 
+```{r}
+scaletrain <- scale(tr[, 1:12]); scaletest <- scale(te[, 1:12])
+train <- as.data.frame(scaletrain)
+train$nlastday <- tr$nlastday
+test <- as.data.frame(scaletest)
+test$nlastday <- te$nlastday
+
+```
+#### KNN
+```{r}
+folds <- cut(seq(1,nrow(train)),breaks=10,labels=FALSE)
+#We use cross-validation on train data and also tune the hyperparameter k based on averaged MSE.
+mse_for_k_list <- c() #list of average MSE of different k in knn
+for(k in 1:50){ 
+  cv_mse_list <- c() #list of MSEs of cross validation when one block is left out
+  for(i in 1:10){
+    #Segement train data by fold
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    cv_test <- train[testIndexes, -13]
+    cv_test_observe <- train[testIndexes, 13]
+    cv_train <- train[-testIndexes, -13]
+    cv_train_observe <- train[-testIndexes, 13]
+    cv_predict <- knn(cv_train, cv_test, cv_train_observe, k = k)
+    cv_mse <- sum(cv_predict != cv_test_observe)/length(cv_predict)
+    cv_mse_list <- c(cv_mse_list, cv_mse)
+  }
+  mse_for_k <- sum(cv_mse_list)/10
+  mse_for_k_list <- c(mse_for_k_list, mse_for_k)
+}
+plot(1:50, mse_for_k_list, 
+     type = "o",
+     main = "MSE of different k in knn", 
+     xlab = "k", ylab = "MSE")
+
+my_k <- which(mse_for_k_list == min(mse_for_k_list)) # we choose the k that minimises the MSE
+my_k
+knn_predict <- knn(train[,-13], test[,-13], train[,13], k = my_k)
+
+```
+
+#### RandomForest
+```{r}
+train$nlastday <- as.character(train$nlastday)#Convert the data to factor to tell the model use classification
+train$nlastday <- as.factor(train$nlastday)
+
+mse_for_n_list <- c() #list of average MSE of different n(number of trees) in random forest
+for(n in seq(40,1000,by=40)){
+  cv_mse_list <- c() #list of MSEs of cross validation when one block is left out
+  for(i in 1:5){   #perfom 5-fold CV
+    #Segement data by fold and train, predict
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    cv_test <- train[testIndexes, ]
+    cv_train <- train[-testIndexes, ]
+    rf <- randomForest(nlastday ~ ., data = cv_train, ntree = n, mtry = sqrt(12))
+    cv_rf_predict <- predict(rf, cv_test, type="response")
+    cv_mse <- sum(cv_rf_predict != cv_test[,13])/length(cv_rf_predict)
+    cv_mse_list <- c(cv_mse_list, cv_mse)
+  }
+  mse_for_n <- sum(cv_mse_list)/5
+  mse_for_n_list <- c(mse_for_n_list, mse_for_n)
+}
+# plot MSE of different n in Random Forest
+plot(seq(40,1000,by=40), mse_for_n_list, 
+     type = "o",
+     main = "MSE of different n in Random Forest", 
+     xlab = "n", ylab = "MSE")
+
+nth_inlist <- which(mse_for_n_list == min(mse_for_n_list))
+my_n <- seq(40,1000, by=40)[nth_inlist]# we choose the n that minimises the MSE
+
+rf <- randomForest(nlastday ~ ., data = train, ntree = my_n, mtry = sqrt(12))
+rf_predict <- predict(rf, test, type="response")
+
+```
+
+
+#### SVM
+```{r}
+mse_for_n_list <- c() #list of average MSE of different n(number of trees) in random forest
+kernels <- c("linear", "polynomial", "radial", "sigmoid")
+for(k in kernels){
+  cv_mse_list <- c() #list of MSEs of cross validation when one block is left out
+  for(i in 1:5){   #perfom 5-fold CV
+    #Segement data by fold and train, predict
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    cv_test <- train[testIndexes, ]
+    cv_train <- train[-testIndexes, ]
+    cv_svm <- svm(formula = nlastday~., data = cv_train, kernel = k)
+    cv_svm_predict <- predict(cv_svm, cv_test, kernal = k)
+    cv_mse <- sum(cv_svm_predict != cv_test[,13])/length(cv_rf_predict)
+    cv_mse_list <- c(cv_mse_list, cv_mse)
+  }
+  mse_for_n <- sum(cv_mse_list)/5
+  mse_for_n_list <- c(mse_for_n_list, mse_for_n)
+}
+
+nth_inkernels <- which(mse_for_n_list == min(mse_for_n_list))
+my_kernel <- kernels[nth_inkernels]# we choose the kernel that minimises the MSE
+
+# create table
+mse_dt <- data.table(
+  Kernel = kernels,
+  MSE = mse_for_n_list
+)
+
+# Create table: MSE of each kernel
+table <- tableGrob(mse_dt)
+
+tt <- textGrob("MSE of each kernel",gp=gpar(fontsize=14))
+fn <- textGrob("", x=0, hjust=0,
+                     gp=gpar( fontface="italic"))
+
+padding <- unit(0.5,"line")
+table <- gtable_add_rows(table, 
+                         heights = grobHeight(tt) + padding,
+                         pos = 0)
+table <- gtable_add_rows(table, heights = grobHeight(fn)+ padding)
+table <- gtable_add_grob(table, list(tt, fn),t=c(1, nrow(table)), l=c(1,2), r=ncol(table))
+grid.newpage()
+grid.draw(table)
+grid.newpage()
+grid.draw(table)
+
+
+svm <- svm(formula = nlastday~., data = train, kernal = my_kernel)
+svm_predict <- predict(svm, test, kernal = my_kernel)
+```
+
+####Ensemble with majority vote
+
+```{r}
+final_predict <- c()#Create a list of predictions
+for (i in 1:length(svm_predict)){
+  predicts_i <- c(knn_predict[i], rf_predict[i], svm_predict[i])
+  mojority_i <- as.numeric(names(which.max(table(predicts_i))))#majority vote
+  final_predict <- c(final_predict, mojority_i)#append new prediction to list
+}
+final_predict <- final_predict -1 #The levels of final_predict are 1 and 2 due to the previous process.Change them to 0 and 1.
+
+```
+
+####Create table
+The levels of final_predict and nlastday in test are both 0 and 1, where 0 represents false and 1 represents true.
+```{r}
+TP <- sum(final_predict==1 & test[, 13] == 1) 
+FP <- sum(final_predict==1 & test[, 13] == 0) 
+TN <- sum(final_predict==0 & test[, 13] == 0) 
+FN <- sum(final_predict==0 & test[, 13] == 1) 
+tablematrix <- matrix(data = c(TP,FN,FP,TN), nrow = 2, ncol = 2, 
+                      dimnames = list(c("TRUE","FALSE"),c("TRUE","FALSE")))
+names(dimnames(tablematrix)) <- c("predicted","observed")
+tablematrix
+```
+####Accuracy
+```{r}
+specificity <- TN/(TN+FP)
+print(paste("specificity: ", specificity))
+sensitivity <- TP/(TP+FN)
+print(paste("sensitivity: ", sensitivity))
+accuracy <- sum(final_predict == test[, 13])/nrow(test)
+print(paste("accuracy: ", accuracy))
+
+```
+
+The table and metrics show that it is a relatively poor classification, with only 69% accuracy and 20% sensitiviy. 
+
+This is probably because predict just from the background and personality traits is not accurate enough, the consumption of other legal substances could be essential in predicting "nlastday".
+
+#Question 5
+For this study, I will discuss the predictor importance in three aspects:
+
+* New logistic regression summary (Here each predictor is not splited)
+* Logistic regression summary in 2.1 (Here each predicotr is splited to different levels)
+* Random forest variable importance plot
+
+
+### New logistic regression summary
+```{r}
+new5druguse <- druguse[,c(1:16,33)]
+new5druguse$gender <- as.numeric(factor(new5druguse$gender))
+new5druguse$agegroup <- as.numeric(factor(new5druguse$agegroup))
+new5druguse$country <- as.numeric(factor(new5druguse$country))
+new5druguse$ethnicity <- as.numeric(factor(new5druguse$ethnicity))
+new5druguse$UseLevel <- ifelse(new5druguse$UseLevel == "high", 1, 0)
+model <- glm(UseLevel ~., family = binomial(link = 'logit'), data = new5druguse)
+summary(model)
+```
+
+We perform significance test on predictors with signifcance level of 5%. By comparing the p-values of predictors with 5%, we have enough evidence to say that agegroup, gender, education, ethnicity, extraversion, opentoexperience, conscientiousness, sensation, chocolate, nicotine and alcohol has association with the use level. We consider them as important predictors.
+
+### Logistic regression summary in 2.1
+```{r}
+model <- glm(UseLevel ~., family = binomial(link = 'logit'), data = new2druguse)
+summary(model)
+```
+
+Again we perform the same test on this model with significance level of 5%, the predictors with more than one '*' are considered as important predictors.
+
+
+### Random forest variable importance plot
+```{r}
+new3druguse$UseLevel <- as.character(new3druguse$UseLevel)
+new3druguse$UseLevel <- as.factor(new3druguse$UseLevel)
+rf <- randomForest(UseLevel ~ ., data = new3druguse, importance = TRUE, ntree = my_n, mtry = sqrt(16))
+varImpPlot(rf, main = "Variable importance in predicting substance use")
+```
+
+Mean decrease in accuracy and mean decrease gini are important index for variable importance. Variables with a large mean decrease in accuracy and mean decrease in Gini are more important for classification of the data. 
+From the graph we can see that, nicotine, country, sensation, opentoexperience, conscientiousness, agegroup, gender, education, neuroticism are important predictors.
+
+### Conclusion
+Nicotine, sensation, opentoexperience, conscientiousness, agegroup, gender are considered as important predictors in all three aspects.
+
+
+
+
+
+
+
+
