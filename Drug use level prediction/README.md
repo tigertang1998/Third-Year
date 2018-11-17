@@ -2,6 +2,6 @@
 C1 - MachineLearning.pdf
 
 # Output
-- MAIN rmd file
-- html
-- poster
+- MAIN.Rmd
+- cw1rmd.html
+- cw1poster.pdf - poster
